@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "planfile-journal"
+version = "0.1.0"
+description = "Ultra-fast reverse-seek JSONL tail, cryptographic hash chain, and PLOG/1 projection for planfile"
+authors = [{ name = "Tom Sapletta", email = "tom@sapletta.com" }]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Logging",
+    "Topic :: Software Development :: Libraries",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "planfile_journal.planfile_journal_rs"
+python-source = "python"
+binding = "pyo3"
