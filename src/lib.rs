@@ -1,15 +1,19 @@
-use std::path::Path;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::path::Path;
 
 mod hash_chain;
 mod plog;
 mod tail;
 
-use hash_chain::{append_event_line as rs_append_event_line, verify_journal_integrity as rs_verify_journal_integrity};
+use hash_chain::{
+    append_event_line as rs_append_event_line,
+    scan_journal_highwater as rs_scan_journal_highwater,
+    verify_journal_integrity as rs_verify_journal_integrity,
+};
 use plog::{parse_plog as rs_parse_plog, serialize_plog as rs_serialize_plog};
-use tail::{read_jsonl_tail as rs_read_jsonl_tail, OPERATIONS_TAIL_MAX_BYTES};
+use tail::{default_tail_max_bytes, read_jsonl_tail as rs_read_jsonl_tail};
 
 fn json_to_py<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<PyObject> {
     match val {
@@ -50,7 +54,7 @@ fn read_jsonl_tail<'py>(
     limit: usize,
     max_bytes: Option<usize>,
 ) -> PyResult<PyObject> {
-    let budget = max_bytes.unwrap_or(OPERATIONS_TAIL_MAX_BYTES);
+    let budget = max_bytes.unwrap_or_else(default_tail_max_bytes);
     let rows = rs_read_jsonl_tail(Path::new(path), limit, budget);
 
     let py_list = PyList::empty_bound(py);
@@ -68,9 +72,23 @@ fn verify_journal_integrity(path: &str) -> (bool, Option<String>, usize) {
 
 #[pyfunction]
 fn append_event_line(path: &str, line: &str) -> PyResult<()> {
-    rs_append_event_line(Path::new(path), line).map_err(|e| {
-        PyValueError::new_err(format!("Failed to append event line: {}", e))
-    })
+    rs_append_event_line(Path::new(path), line)
+        .map_err(|e| PyValueError::new_err(format!("Failed to append event line: {}", e)))
+}
+
+#[pyfunction]
+fn scan_journal_highwater<'py>(py: Python<'py>, path: &str) -> PyResult<(PyObject, PyObject)> {
+    let (highs, sig) =
+        rs_scan_journal_highwater(Path::new(path)).map_err(PyRuntimeError::new_err)?;
+    let dict = PyDict::new_bound(py);
+    for (k, v) in highs {
+        dict.set_item(k, v)?;
+    }
+    let sig_obj = match sig {
+        Some(arr) => PyList::new_bound(py, arr).into_py(py),
+        None => py.None(),
+    };
+    Ok((dict.into_py(py), sig_obj))
 }
 
 #[pyfunction]
@@ -100,6 +118,7 @@ fn planfile_journal_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_jsonl_tail, m)?)?;
     m.add_function(wrap_pyfunction!(verify_journal_integrity, m)?)?;
     m.add_function(wrap_pyfunction!(append_event_line, m)?)?;
+    m.add_function(wrap_pyfunction!(scan_journal_highwater, m)?)?;
     m.add_function(wrap_pyfunction!(serialize_plog, m)?)?;
     m.add_function(wrap_pyfunction!(parse_plog, m)?)?;
     Ok(())

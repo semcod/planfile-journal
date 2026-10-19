@@ -4,12 +4,13 @@ import hashlib
 import json
 import pytest
 from planfile_journal import (
-    read_jsonl_tail,
-    verify_journal_integrity,
-    append_event_line,
-    serialize_plog,
-    parse_plog,
     HAS_RUST_JOURNAL,
+    append_event_line,
+    parse_plog,
+    read_jsonl_tail,
+    scan_journal_highwater,
+    serialize_plog,
+    verify_journal_integrity,
 )
 
 
@@ -19,10 +20,8 @@ def test_read_jsonl_tail(tmp_path):
         for i in range(100):
             f.write(json.dumps({"event_id": f"evt-{i:03d}", "value": i}) + "\n")
 
-    # Read last 5 events
     rows = read_jsonl_tail(journal_file, limit=5)
     assert len(rows) == 5
-    # Newest first: evt-099, evt-098, evt-097, evt-096, evt-095
     assert rows[0]["event_id"] == "evt-099"
     assert rows[0]["value"] == 99
     assert rows[4]["event_id"] == "evt-095"
@@ -35,6 +34,24 @@ def test_read_jsonl_tail_empty_and_missing(tmp_path):
     empty_file = tmp_path / "empty.jsonl"
     empty_file.touch()
     assert read_jsonl_tail(empty_file, limit=10) == []
+
+
+def test_scan_journal_highwater(tmp_path):
+    assert HAS_RUST_JOURNAL is True
+    journal_file = tmp_path / "operations.jsonl"
+    events = [
+        {"schema": "planfile.operation/v1", "event": {"ticket_id": "PLF-009"}},
+        {"schema": "planfile.operation/v1", "event": {"ticket_id": "PLF-270"}},
+        {"schema": "planfile.operation/v1", "event": {"ticket_id": "KORU-042"}},
+        {"schema": "planfile.operation/v1", "event": {"ticket_id": "PLF-115"}},
+    ]
+    with open(journal_file, "w", encoding="utf-8") as f:
+        for row in events:
+            f.write(json.dumps(row) + "\n")
+
+    highs, sig = scan_journal_highwater(journal_file)
+    assert highs == {"PLF": 270, "KORU": 42}
+    assert isinstance(sig, list) and len(sig) == 5
 
 
 def test_verify_journal_integrity(tmp_path):
@@ -60,7 +77,6 @@ def test_verify_journal_integrity(tmp_path):
     assert err is None
     assert count == 50
 
-    # Tamper with line 25
     lines = journal_file.read_text().splitlines()
     tampered_row = json.loads(lines[25])
     tampered_row["previous_hash"] = "tampered_fake_hash_12345"
@@ -107,7 +123,7 @@ def test_plog_roundtrip():
 
     line = serialize_plog(event)
     assert line.startswith("PLOG/1\t")
-    assert "ticket_id=\"T-01\"" in line
+    assert 'ticket_id="T-01"' in line
 
     parsed = parse_plog(line)
     assert parsed["schema"] == "planfile.forensic-log/v1"
@@ -119,4 +135,4 @@ def test_plog_roundtrip():
 
 def test_plog_invalid_prefix():
     with pytest.raises(Exception):
-        parse_plog("INVALID/1\ttimestamp=\"2026-01-01\"")
+        parse_plog('INVALID/1\ttimestamp="2026-01-01"')

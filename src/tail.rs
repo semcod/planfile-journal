@@ -1,11 +1,21 @@
-use std::fs::File;
-use std::path::Path;
 use memmap2::Mmap;
 use serde_json::Value;
+use std::env;
+use std::fs::File;
+use std::path::Path;
 
 pub const OPERATIONS_TAIL_MAX_BYTES: usize = 256 * 1024 * 1024;
 #[allow(dead_code)]
 pub const CHUNK_BYTES: usize = 1024 * 1024;
+
+/// Dynamic tail byte budget governed by `wellmanifest/nohardcode` (`PLANFILE_TAIL_MAX_BYTES`).
+pub fn default_tail_max_bytes() -> usize {
+    env::var("PLANFILE_TAIL_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|v| v.clamp(4_096, 1_073_741_824))
+        .unwrap_or(OPERATIONS_TAIL_MAX_BYTES)
+}
 
 /// Reverse-seek reading of JSONL file up to `limit` rows or `max_bytes` scanned.
 /// Returns rows newest-first.
@@ -33,7 +43,6 @@ pub fn read_jsonl_tail(
         return Vec::new();
     }
 
-    // Safety: we map the file read-only
     let mmap = match unsafe { Mmap::map(&file) } {
         Ok(m) => m,
         Err(_) => return Vec::new(),
@@ -46,9 +55,7 @@ pub fn read_jsonl_tail(
     let mut rows = Vec::with_capacity(limit.min(1000));
     let mut end = slice.len();
 
-    // Iterate backwards from the end of the slice
     while end > 0 && rows.len() < limit {
-        // Find previous newline
         let prev_nl = slice[..end].iter().rposition(|&b| b == b'\n');
         let line_start = match prev_nl {
             Some(pos) => pos + 1,
